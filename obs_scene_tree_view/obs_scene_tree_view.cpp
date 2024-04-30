@@ -113,14 +113,27 @@ void ObsSceneTreeView::SaveSceneTree(const char *scene_collection)
 		blog(LOG_WARNING, "[%s] Failed to save scene tree in '%s'", obs_module_name(), stv_config_file_path.Get());
 }
 
-void ObsSceneTreeView::LoadSceneTree(const char *scene_collection)
-{
-	assert(scene_collection);
+void ObsSceneTreeView::LoadSceneTree(const char *scene_collection) {
+    if (!scene_collection) {
+        blog(LOG_WARNING, "[%s] No scene collection specified for loading scene tree.", obs_module_name());
+        return;
+    }
 
-	BPtr<char> stv_config_file_path = obs_module_config_path(SCENE_TREE_CONFIG_FILE.data());
+    // Assuming the scene tree configuration is embedded in the main OBS data
+    OBSDataAutoRelease main_obs_data = obs_data_get_obj(obs_frontend_get_profile_data(), "scene_tree_configuration");
+    if (!main_obs_data) {
+        blog(LOG_WARNING, "[%s] No scene tree configuration found in main OBS data.", obs_module_name());
+        return;
+    }
 
-	OBSDataAutoRelease stv_data = obs_data_create_from_json_file(stv_config_file_path);
-	this->_scene_tree_items.LoadSceneTree(stv_data, scene_collection, this->_stv_dock.stvTree);
+    // Load the scene tree data specific to the current scene collection
+    OBSDataAutoRelease specific_scene_data = obs_data_get_obj(main_obs_data, scene_collection);
+    if (!specific_scene_data) {
+        blog(LOG_WARNING, "[%s] No specific scene tree configuration found for '%s'.", obs_module_name(), scene_collection);
+        return;
+    }
+
+    this->_scene_tree_items.LoadSceneTree(specific_scene_data, scene_collection, this->_stv_dock.stvTree);
 }
 
 void ObsSceneTreeView::UpdateTreeView()
@@ -536,8 +549,16 @@ void ObsSceneTreeView::ObsFrontendEvent(enum obs_frontend_event event)
 	}
 }
 
-void ObsSceneTreeView::ObsFrontendSave(obs_data_t */*save_data*/, bool saving)
-{
-	if(saving)
-		this->SaveSceneTree(this->_scene_collection_name);
+void ObsSceneTreeView::ObsFrontendSave(obs_data_t *save_data, bool saving) {
+    if (saving && save_data) {
+        // Generate scene tree data
+        OBSDataAutoRelease scene_tree_data = obs_data_create();
+        this->_scene_tree_items.SaveSceneTree(scene_tree_data, this->_scene_collection_name, this->_stv_dock.stvTree);
+
+        // Incorporate scene tree data into main scenes data
+        obs_data_set_obj(save_data, "scene_tree_configuration", scene_tree_data);
+
+        blog(LOG_INFO, "[%s] Scene tree configuration integrated into main scenes data", obs_module_name());
+    }
 }
+
